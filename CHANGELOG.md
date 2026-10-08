@@ -2,6 +2,27 @@
 
 所有可感知的变更都记录在这里。项目按迭代推进，每个迭代结束后版本号递增。
 
+## [1.5.2] - 移除已下线的必应通道，修复设置保存与代理范围缺陷
+
+### 移除
+- **微软必应翻译通道整体移除**：`edge.microsoft.com/translate/auth` 免费鉴权端点已全球下线（实测返回 HTTP 404；域名本身存活返回 400，翻译 API 返回 401，故非 DNS / CDN 问题），该通道无法恢复。`background/providers.js` 中的令牌获取、5 分钟熔断与 `microsoftTranslate` 全部删除，`PROVIDERS.microsoft`、`CHUNK_LIMITS.microsoft` 一并移除
+- **免费接口互备（KEYLESS_FALLBACK）移除**：微软通道失效后「必应 ↔ 谷歌」双向备份退化为单向，谷歌 429 时必然叠加一层无意义的长错误。现在失败原因只报一次，重试保持 3 次指数退避
+- **代理范围（PAC）同步收窄**：`API_HOSTS` 移除 `edge.microsoft.com` 与 `api-edge.cognitive.microsofttranslator.com`
+- 界面与文档同步：设置页 / 弹窗的服务下拉、用量统计标签、语言代码表（`microsoft` 列）、`manifest.json` 描述、README 中的必应说明
+
+### 修复
+- **谷歌 429 的提示改为可操作**：移除互备后该错误不再叠加备用服务的失败信息；keyless 的 `gtx` 端点按出口 IP 限流，代理 / 公共网络的共享 IP 极易被限流，提示现在直接说明原因并给出「稍后重试 / 更换代理节点 / 改用 AI 翻译」三条出路，而不是笼统的「请稍后重试」
+- **翻译风格永久失效**：`service-worker.js` 曾用 apiFormat 的取值（openai/claude）校验 style，而 style 合法值是 general/academic/tech，条件恒为真 → academic / tech 每次读取设置都被重置为 general。改用 `AI_STYLES.includes(...)`
+- **AI 方案被清空（数据丢失）**：保存设置时用浅展开合并部分更新，弹窗切换方案只提交 `{ ai: { activeId } }`，整个 `ai` 对象被替换 → `profiles` 与 API Key 丢失，旧版迁移分支再重建出一个空「默认方案」。改为深合并（`applyPartial` = `deepMerge` + `mergeDefaults`）
+- **PAC 脚本漏掉自定义 AI 接口**：v1.4.0 多方案重构后 `settings.ai.baseUrl` 已不存在，PAC 只含硬编码主机，走代理时自定义 AI 请求直连失败。改为遍历 `aiProfileBaseUrls(settings)`
+- **损坏设置导致读取抛错**：`mergeDefaults({ ai: null })` 抛 `Cannot read properties of null (reading 'profiles')`；合并循环现在跳过 null / undefined 与非普通对象
+
+### 迁移
+- 老配置 `provider: 'baidu'` 与 `provider: 'microsoft'` 统一迁移为 `'google'`；默认服务仍为谷歌
+
+### 校验
+- `node tools/check.js` 全部通过（新增断言：PROVIDERS / CHUNK_LIMITS 不含 microsoft、service-worker 无 KEYLESS_FALLBACK、proxy.js 无 microsoft 域名、已下线服务迁移到 google）
+
 ## [1.5.0] - 响应速度、数据发送与界面布局优化
 
 ### 优化（AI 响应速度）

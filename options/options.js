@@ -307,7 +307,7 @@ async function refreshProxyStatus() {
 
 // ---------------------------------------------------------------- 用量统计（按服务分类）
 
-const SERVICE_LABELS = { google: '谷歌翻译', microsoft: '必应翻译' };
+const SERVICE_LABELS = { google: '谷歌翻译' };
 
 function serviceLabel(key) {
   return SERVICE_LABELS[key] || (key.indexOf('ai:') === 0 ? 'AI · ' + key.slice(3) : key);

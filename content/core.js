@@ -394,7 +394,6 @@
     // 避免"内容端小批次 + 服务端大上限"造成的请求数浪费（AI 尤其明显）
     function batchCapsFor(provider) {
       if (provider === 'ai') return { chars: 2800, lines: 36 };
-      if (provider === 'microsoft') return { chars: 2000, lines: 40 };
       return { chars: 1200, lines: 50 };
     }
 

@@ -2,20 +2,20 @@
 // background（service worker）与弹窗、设置页均以 ES Module 方式引入。
 
 export const LANGS = [
-  { code: 'zh-CN', name: '简体中文', google: 'zh-CN', microsoft: 'zh-Hans', ai: '简体中文' },
-  { code: 'zh-TW', name: '繁體中文', google: 'zh-TW', microsoft: 'zh-Hant', ai: '繁体中文' },
-  { code: 'en', name: 'English', google: 'en', microsoft: 'en', ai: '英语' },
-  { code: 'ja', name: '日本語', google: 'ja', microsoft: 'ja', ai: '日语' },
-  { code: 'ko', name: '한국어', google: 'ko', microsoft: 'ko', ai: '韩语' },
-  { code: 'fr', name: 'Français', google: 'fr', microsoft: 'fr', ai: '法语' },
-  { code: 'de', name: 'Deutsch', google: 'de', microsoft: 'de', ai: '德语' },
-  { code: 'es', name: 'Español', google: 'es', microsoft: 'es', ai: '西班牙语' },
-  { code: 'ru', name: 'Русский', google: 'ru', microsoft: 'ru', ai: '俄语' },
-  { code: 'pt', name: 'Português', google: 'pt', microsoft: 'pt', ai: '葡萄牙语' },
-  { code: 'it', name: 'Italiano', google: 'it', microsoft: 'it', ai: '意大利语' },
-  { code: 'ar', name: 'العربية', google: 'ar', microsoft: 'ar', ai: '阿拉伯语' },
-  { code: 'th', name: 'ไทย', google: 'th', microsoft: 'th', ai: '泰语' },
-  { code: 'vi', name: 'Tiếng Việt', google: 'vi', microsoft: 'vi', ai: '越南语' }
+  { code: 'zh-CN', name: '简体中文', google: 'zh-CN', ai: '简体中文' },
+  { code: 'zh-TW', name: '繁體中文', google: 'zh-TW', ai: '繁体中文' },
+  { code: 'en', name: 'English', google: 'en', ai: '英语' },
+  { code: 'ja', name: '日本語', google: 'ja', ai: '日语' },
+  { code: 'ko', name: '한국어', google: 'ko', ai: '韩语' },
+  { code: 'fr', name: 'Français', google: 'fr', ai: '法语' },
+  { code: 'de', name: 'Deutsch', google: 'de', ai: '德语' },
+  { code: 'es', name: 'Español', google: 'es', ai: '西班牙语' },
+  { code: 'ru', name: 'Русский', google: 'ru', ai: '俄语' },
+  { code: 'pt', name: 'Português', google: 'pt', ai: '葡萄牙语' },
+  { code: 'it', name: 'Italiano', google: 'it', ai: '意大利语' },
+  { code: 'ar', name: 'العربية', google: 'ar', ai: '阿拉伯语' },
+  { code: 'th', name: 'ไทย', google: 'th', ai: '泰语' },
+  { code: 'vi', name: 'Tiếng Việt', google: 'vi', ai: '越南语' }
 ];
 
 export const SOURCE_LANGS = [

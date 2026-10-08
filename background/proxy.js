@@ -8,11 +8,7 @@
 
 import { aiProfileBaseUrls } from '../shared/settings.js';
 
-const API_HOSTS = [
-  'translate.googleapis.com',
-  'edge.microsoft.com',
-  'api-edge.cognitive.microsofttranslator.com'
-];
+const API_HOSTS = ['translate.googleapis.com'];
 
 function proxyRuleString(protocol, host, port) {
   if (protocol === 'socks5') return `SOCKS5 ${host}:${port}`;

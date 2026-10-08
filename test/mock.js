@@ -16,7 +16,6 @@
     cacheEnabled: true,
     autoDetectSkip: false,
     blacklist: [],
-    baidu: {},
     ai: {},
     proxy: { mode: 'system' }
   };

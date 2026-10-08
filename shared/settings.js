@@ -52,8 +52,12 @@ export function mergeDefaults(stored) {
   const out = structuredClone(DEFAULT_SETTINGS);
   if (!stored || typeof stored !== 'object') stored = {};
 
-  // 迁移（1）：百度翻译已移除，改用同为免费无密钥的必应翻译
-  if (stored.provider === 'baidu') stored = { ...stored, provider: 'microsoft' };
+  // 迁移（1）：百度翻译与微软必应翻译均已移除，统一回落到谷歌免费接口。
+  // 微软 Edge 的免费鉴权端点（edge.microsoft.com/translate/auth）已全球下线并返回 404，
+  // 该通道无法恢复，故不再保留。
+  if (stored.provider === 'baidu' || stored.provider === 'microsoft') {
+    stored = { ...stored, provider: 'google' };
+  }
 
   // 迁移（2）：旧版单配置 → 多方案（profiles），旧字段并入"默认方案"
   if (isLegacyAi(stored.ai)) {

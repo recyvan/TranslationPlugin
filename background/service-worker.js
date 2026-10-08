@@ -46,7 +46,7 @@ async function saveSettings(partial) {
 }
 
 // ---------------------------------------------------------------- 用量统计（按服务分类）
-// 按实际使用的翻译服务分桶记录：google / microsoft / ai:<模型名>。
+// 按实际使用的翻译服务分桶记录：google / ai:<模型名>。
 // 数据结构：{ days: { 日期: { 服务: {chars, requests, aiTokens} } }, total: { 服务: {...} } }
 
 const USAGE_KEY = 'itrUsage2';
@@ -128,10 +128,6 @@ function cacheSet(key, value) {
 
 // ---------------------------------------------------------------- 并发池与重试
 
-// 免费接口互备：必应鉴权域名在国内 CDN 节点会 404，谷歌无代理时无法直连，
-// 任一免费服务失败时自动切换到另一个（AI 为付费服务，不参与自动切换）
-const KEYLESS_FALLBACK = { microsoft: 'google', google: 'microsoft' };
-
 async function runPool(items, limit, worker) {
   let index = 0;
   const size = Math.max(1, Math.min(limit, items.length));
@@ -181,22 +177,9 @@ async function translateWithRetry(provider, texts, from, to, settings) {
       return await translateChunk(provider, texts, from, to, settings);
     } catch (e) {
       lastErr = e;
-      if (e && e.cancelled) break; // 用户取消：不重试、不切换备用服务
+      if (e && e.cancelled) break; // 用户取消：不重试
       if (!e || !e.retryable || attempt === 2) break;
       await sleep(800 * Math.pow(2, attempt));
-    }
-  }
-  // 两个免费接口互为自动备份：必应在部分网络环境下鉴权域名命中国内节点返回 404，
-  // 谷歌在无代理环境无法直连。主服务重试耗尽后自动尝试另一个免费服务。
-  const fallback = KEYLESS_FALLBACK[provider];
-  if (fallback && lastErr && !lastErr.fromFallback && !lastErr.cancelled) {
-    try {
-      const out = await translateChunk(fallback, texts, from, to, settings);
-      if (out && out.length) return out;
-    } catch (e2) {
-      const err = new Error(`${lastErr.message}；备用翻译服务也不可用（${e2.message}）`);
-      err.fromFallback = true;
-      throw err;
     }
   }
   throw lastErr;

@@ -94,7 +94,19 @@ async function googleTranslate(texts, from, to) {
     err.retryable = true;
     throw err;
   }
-  if (!resp.ok) throw httpError(resp.status, '谷歌翻译接口');
+  if (!resp.ok) {
+    if (resp.status === 429) {
+      // keyless 的 gtx 端点按出口 IP 限流，代理 / 公共网络的共享 IP 很容易被限流。
+      // 这不是本机配置错误，重试往往无效，因此给出可操作的替代方案。
+      const err = new Error(
+        '谷歌免费接口限流（HTTP 429）：该免费端点按出口 IP 限流，代理或公共网络的共享 IP 容易被限流。' +
+        '可稍后重试、更换代理节点，或在设置中改用 AI 翻译（需填写接口地址与密钥）。'
+      );
+      err.retryable = true;
+      throw err;
+    }
+    throw httpError(resp.status, '谷歌翻译接口');
+  }
 
   let data;
   try {
@@ -115,96 +127,6 @@ async function googleTranslate(texts, from, to) {
   const parts = out.split('\n');
   if (parts.length !== texts.length) return null; // 对不齐 → 上层逐条重试
   return parts.map((p) => p.trim());
-}
-
-// ---------------------------------------------------------------- 微软必应翻译（免费，无需密钥）
-// 通过 Edge 浏览器翻译服务的公开端点：先从 edge.microsoft.com 获取临时令牌（约 10 分钟有效），
-// 再调用 api-edge.cognitive.microsofttranslator.com。该接口原生支持文本数组，结果天然对齐。
-
-let msAuthToken = null;
-let msTokenTime = 0;
-let msAuthBrokenUntil = 0; // 鉴权 404 后短期熔断，直接走备用服务
-
-async function getMicrosoftToken() {
-  if (msAuthToken && Date.now() - msTokenTime < 8 * 60 * 1000) return msAuthToken;
-  if (Date.now() < msAuthBrokenUntil) {
-    throw new Error('必应翻译鉴权失败（HTTP 404）：微软域名直连常命中国内节点，插件将自动改用谷歌翻译');
-  }
-  let resp;
-  try {
-    resp = await fetchWithTimeout('https://edge.microsoft.com/translate/auth', { method: 'GET' }, 15000);
-  } catch (e) {
-    if (e && (e.cancelled || e.message === '请求超时')) throw e;
-    const err = new Error('必应翻译鉴权连接失败（该域名在国内需配置代理）');
-    err.retryable = true;
-    throw err;
-  }
-  if (!resp.ok) {
-    if (resp.status === 404) {
-      // 微软域名直连时可能命中国内 CDN 节点，该节点不提供此路径；短期熔断
-      msAuthBrokenUntil = Date.now() + 5 * 60 * 1000;
-      throw new Error('必应翻译鉴权失败（HTTP 404）：微软域名直连常命中国内节点，插件将自动改用谷歌翻译');
-    }
-    throw httpError(resp.status, '必应翻译鉴权');
-  }
-  const token = (await resp.text()).trim();
-  if (!token || token.length < 20) throw new Error('必应翻译鉴权失败：未获取到有效令牌');
-  msAuthToken = token;
-  msTokenTime = Date.now();
-  return token;
-}
-
-async function microsoftTranslate(texts, from, to) {
-  const token = await getMicrosoftToken();
-  const url =
-    'https://api-edge.cognitive.microsofttranslator.com/translate?api-version=3.0' +
-    (from && from !== 'auto' ? `&from=${encodeURIComponent(from)}` : '') +
-    `&to=${encodeURIComponent(to)}`;
-
-  let resp;
-  try {
-    resp = await fetchWithTimeout(
-      url,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify(texts.map((t) => ({ Text: t })))
-      },
-      20000
-    );
-  } catch (e) {
-    if (e && (e.cancelled || e.message === '请求超时')) throw e;
-    const err = new Error('必应翻译接口连接失败（该域名在国内需配置代理）');
-    err.retryable = true;
-    throw err;
-  }
-  if (!resp.ok) {
-    if (resp.status === 401) {
-      // 令牌过期：作废缓存，下次请求重新获取
-      msAuthToken = null;
-      const err = new Error('必应翻译令牌过期，请重试');
-      err.retryable = true;
-      throw err;
-    }
-    throw httpError(resp.status, '必应翻译接口');
-  }
-
-  let data;
-  try {
-    data = await resp.json();
-  } catch (e) {
-    throw new Error('必应翻译接口返回了无法解析的内容');
-  }
-  if (!Array.isArray(data) || data.length !== texts.length) {
-    throw new Error('必应翻译接口返回格式异常');
-  }
-  return data.map(
-    (item) =>
-      (item && item.translations && item.translations[0] && item.translations[0].text) || ''
-  );
 }
 
 // ---------------------------------------------------------------- AI 翻译（OpenAI 兼容 + Claude 兼容）
@@ -448,11 +370,6 @@ export const PROVIDERS = {
     needsConfig: false,
     translate: googleTranslate
   },
-  microsoft: {
-    label: '必应翻译（免费，无需密钥）',
-    needsConfig: false,
-    translate: microsoftTranslate
-  },
   ai: {
     label: 'AI 翻译（自定义）',
     needsConfig: true,
@@ -466,10 +383,9 @@ export function getProvider(name) {
 }
 
 // 每个服务的单次请求体积上限。
-// google 按 URL 编码后长度控制；microsoft 用 JSON 数组（单条上限 10k 字符，保守控制）；
+// google 按 URL 编码后长度控制；
 // ai 按字符与行数控制，避免超出上下文或输出截断。
 export const CHUNK_LIMITS = {
   google: { chars: 1500, lines: 50 },
-  microsoft: { chars: 2000, lines: 40 },
   ai: { chars: 2800, lines: 36 }
 };

@@ -3,7 +3,7 @@
 export const STORAGE_KEY = 'itrSettings';
 
 export const DEFAULT_SETTINGS = {
-  // 默认翻译服务: google | baidu | ai
+  // 默认翻译服务: google | ai
   provider: 'google',
   // 源语言：auto 表示自动检测
   from: 'auto',

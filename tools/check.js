@@ -131,17 +131,25 @@ for (const sc of pacScenarios) {
 
 // ---------- 6. 翻译服务注册表完整性 ----------
 const providersModule = await import(pathToFileURL(join(root, 'background', 'providers.js')).href);
-for (const name of ['google', 'microsoft', 'ai']) {
+for (const name of ['google', 'ai']) {
   if (!providersModule.PROVIDERS[name] || typeof providersModule.PROVIDERS[name].translate !== 'function') {
     errors.push(`PROVIDERS.${name} 未注册或缺少 translate`);
   } else {
     console.log(`  ok  PROVIDERS.${name} 注册完整`);
   }
 }
-if (providersModule.PROVIDERS.baidu) {
-  errors.push('PROVIDERS.baidu 应已移除（百度翻译已下线）');
+// 已下线的免费通道：百度（v1.3 移除）、微软必应（v1.5.2 移除，免费鉴权端点已全球 404）
+for (const gone of ['baidu', 'microsoft']) {
+  if (providersModule.PROVIDERS[gone]) {
+    errors.push(`PROVIDERS.${gone} 应已移除（该免费通道已下线）`);
+  } else {
+    console.log(`  ok  ${gone} 已移除`);
+  }
+}
+if ('microsoft' in providersModule.CHUNK_LIMITS) {
+  errors.push('CHUNK_LIMITS.microsoft 应已移除');
 } else {
-  console.log('  ok  百度翻译已移除');
+  console.log('  ok  CHUNK_LIMITS 无 microsoft');
 }
 
 // ---------- 7. 默认设置结构 ----------
@@ -182,6 +190,17 @@ if (swModule) {
     errors.push('service-worker 缺少二分对齐重试');
   } else {
     console.log('  ok  批次对不齐时二分重试');
+  }
+  if (swSrc.includes('KEYLESS_FALLBACK')) {
+    errors.push('service-worker 不应再有 KEYLESS_FALLBACK（免费接口互备已随微软通道一并移除）');
+  } else {
+    console.log('  ok  免费接口互备（KEYLESS_FALLBACK）已移除');
+  }
+  const proxySrc = readFileSync(join(root, 'background', 'proxy.js'), 'utf8');
+  if (/microsoft/i.test(proxySrc)) {
+    errors.push('proxy.js 仍引用 microsoft 域名');
+  } else {
+    console.log('  ok  PAC 代理范围不含 microsoft 域名');
   }
 }
 
@@ -251,6 +270,20 @@ const { mergeDefaults, applyPartial, aiProfileBaseUrls } = await import(
   } catch (e) {
     errors.push('mergeDefaults 处理异常输入时抛错: ' + e.message);
   }
+}
+
+// (f) 已下线的免费服务必须迁移到 google
+// 微软必应的免费鉴权端点（edge.microsoft.com/translate/auth）已全球返回 404，
+// 老用户存储里的 provider=microsoft / baidu 必须回落到谷歌，否则翻译会直接失败。
+{
+  const problems = [];
+  for (const legacy of ['baidu', 'microsoft']) {
+    const s = mergeDefaults({ provider: legacy });
+    if (s.provider !== 'google') problems.push(`${legacy}→${s.provider}`);
+  }
+  if (mergeDefaults({}).provider !== 'google') problems.push('默认值不是 google');
+  if (problems.length) errors.push('已下线服务未迁移到 google: ' + problems.join(', '));
+  else console.log('  ok  已下线免费服务（baidu / microsoft）迁移到 google');
 }
 
 // ---------- 结果 ----------
