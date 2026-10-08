@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header class="head">
+    <img src="../icons/icon32.png" alt="" class="logo" />
+    <div class="head-text">
+      <div class="title">网页翻译助手</div>
+      <div class="host" id="hostInfo">…</div>
+    </div>
+  </header>
+
+  <section class="hero">
+    <button id="btnTranslate" class="primary">翻译此页</button>
+    <div class="status" id="status">未翻译</div>
+  </section>
+
+  <section class="form">
+    <div class="form-title">参数</div>
+    <div class="grid2">
+      <label class="row">
+        <span>目标语言</span>
+        <select id="selTo"></select>
+      </label>
+      <label class="row">
+        <span>源语言</span>
+        <select id="selFrom"></select>
+      </label>
+      <label class="row">
+        <span>显示模式</span>
+        <select id="selMode">
+          <option value="bilingual">双语对照</option>
+          <option value="replace">仅显示译文</option>
+        </select>
+      </label>
+      <label class="row">
+        <span>翻译服务</span>
+        <select id="selProvider">
+          <option value="google">谷歌（免费）</option>
+          <option value="microsoft">必应（免费）</option>
+          <option value="ai">AI（自定义）</option>
+        </select>
+      </label>
+    </div>
+    <label class="row row-wide" id="rowAiProfile" hidden>
+      <span>AI 方案</span>
+      <select id="selAiProfile"></select>
+    </label>
+    <div class="provider-hint" id="providerHint" hidden>
+      当前方案尚未配置完整，<a href="#" id="lnkGoOptions">去设置</a>
+    </div>
+  </section>
+
+  <details class="quick">
+    <summary>快速翻译</summary>
+    <textarea id="quickInput" rows="2" placeholder="输入要翻译的文字…（Enter 翻译）"></textarea>
+    <div class="quick-result" id="quickResult" hidden></div>
+  </details>
+
+  <footer class="foot">
+    <label class="block-row" id="autoRow" title="勾选后打开该站点的页面时自动翻译">
+      <input type="checkbox" id="chkAuto" />
+      <span>自动翻译此站</span>
+    </label>
+    <label class="block-row" id="blockRow" title="加入黑名单后此站点不再翻译">
+      <input type="checkbox" id="chkBlock" />
+      <span>不翻译此站</span>
+    </label>
+    <a href="#" id="lnkOptions">设置</a>
+  </footer>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>

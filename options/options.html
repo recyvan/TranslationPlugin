@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>网页翻译助手 · 设置</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="head">
+      <img src="../icons/icon48.png" alt="" class="logo" />
+      <div>
+        <h1>网页翻译助手 · 设置</h1>
+        <p class="sub">所有设置保存在本机浏览器中，API 密钥不会同步到云端。</p>
+      </div>
+    </header>
+
+    <nav class="nav" id="nav">
+      <a href="#sec-general" class="active">常规</a>
+      <a href="#sec-ai">AI 翻译</a>
+      <a href="#sec-proxy">代理</a>
+      <a href="#sec-usage">用量</a>
+      <a href="#sec-advanced">高级</a>
+    </nav>
+
+    <main>
+      <section id="sec-general" class="card">
+        <h2>常规</h2>
+        <div class="grid">
+          <label>默认翻译服务
+            <select id="selProvider">
+              <option value="google">谷歌翻译（免费，无需配置）</option>
+              <option value="microsoft">必应翻译（免费，无需配置）</option>
+              <option value="ai">AI 翻译（自定义模型）</option>
+            </select>
+          </label>
+          <label>默认目标语言
+            <select id="selTo"></select>
+          </label>
+          <label>默认源语言
+            <select id="selFrom"></select>
+          </label>
+          <label>显示模式
+            <select id="selMode">
+              <option value="bilingual">双语对照（原文 + 译文）</option>
+              <option value="replace">仅显示译文（替换原文）</option>
+            </select>
+          </label>
+          <label>双语译文颜色
+            <input type="color" id="inColor" />
+          </label>
+          <label>基础服务并发数（1-6）
+            <input type="number" id="inConcurrency" min="1" max="6" />
+          </label>
+          <label class="check">
+            <input type="checkbox" id="chkCache" />
+            启用翻译缓存（相同内容不重复请求）
+          </label>
+          <label class="check">
+            <input type="checkbox" id="chkSkipSame" />
+            页面语言与目标语言相同时自动跳过
+          </label>
+          <label class="check">
+            <input type="checkbox" id="chkContextMenu" />
+            在右键菜单中显示「翻译整个网页 / 恢复原文」
+          </label>
+        </div>
+        <div class="actions">
+          <button class="secondary" id="btnTestGeneral">测试当前默认服务</button>
+          <span class="test-result" id="testGeneralResult"></span>
+        </div>
+      </section>
+
+      <section id="sec-ai" class="card">
+        <h2>AI 翻译</h2>
+        <p class="hint">
+          可保存多套 API 方案（如 DeepSeek、Claude 各一套），翻译时始终使用「当前使用」选中的方案，
+          <b>不会在方案之间自动切换</b>。支持 <b>OpenAI 兼容</b>（/chat/completions）与
+          <b>Claude 兼容</b>（/v1/messages）两种接口格式。
+        </p>
+        <div class="grid">
+          <label>当前使用（翻译时生效）
+            <select id="selAiActive"></select>
+          </label>
+          <label>正在编辑
+            <select id="selAiProfile"></select>
+          </label>
+        </div>
+        <div class="actions">
+          <button class="secondary" id="btnAiNew">新建方案</button>
+          <button class="secondary danger" id="btnAiDelete">删除正在编辑</button>
+          <span class="test-result" id="aiProfileTip"></span>
+        </div>
+        <div class="grid">
+          <label>方案名称
+            <input type="text" id="inAiName" placeholder="如：DeepSeek / Claude" autocomplete="off" />
+          </label>
+          <label>接口格式
+            <select id="selAiFormat">
+              <option value="openai">OpenAI 兼容（/chat/completions）</option>
+              <option value="claude">Claude 兼容（/v1/messages）</option>
+            </select>
+          </label>
+          <label class="wide">接口地址（Base URL）
+            <input type="text" id="inAiBase" placeholder="https://api.deepseek.com 或 https://api.anthropic.com" autocomplete="off" />
+          </label>
+          <label>API Key
+            <input type="password" id="inAiKey" placeholder="sk-…" autocomplete="new-password" />
+          </label>
+          <label>模型名称
+            <input type="text" id="inAiModel" list="aiModels" placeholder="deepseek-chat / claude-sonnet-4-5" autocomplete="off" />
+            <datalist id="aiModels">
+              <option value="deepseek-chat"></option>
+              <option value="deepseek-reasoner"></option>
+              <option value="qwen-plus"></option>
+              <option value="qwen-turbo"></option>
+              <option value="moonshot-v1-8k"></option>
+              <option value="glm-4-flash"></option>
+              <option value="gpt-4o-mini"></option>
+              <option value="gpt-4.1-mini"></option>
+              <option value="claude-sonnet-4-5"></option>
+              <option value="claude-haiku-4-5"></option>
+            </datalist>
+          </label>
+          <label>温度（0-1，越低越稳定）
+            <input type="number" id="inAiTemp" min="0" max="1" step="0.1" />
+          </label>
+          <label class="wide">自定义系统提示词（可选，{to} 目标语言、{from} 源语言；风格要求会追加在其后）
+            <textarea id="inAiPrompt" rows="3" placeholder="留空使用内置提示词。"></textarea>
+          </label>
+        </div>
+        <div class="actions">
+          <button class="secondary" id="btnFetchModels">获取模型列表</button>
+          <button class="secondary" id="btnTestAi">测试正在编辑的方案</button>
+          <span class="test-result" id="testAiResult"></span>
+        </div>
+        <div class="grid">
+          <label>翻译风格（所有方案共用）
+            <select id="selAiStyle">
+              <option value="general">通用（网页自然翻译）</option>
+              <option value="academic">学术（论文 / 文献，术语规范）</option>
+              <option value="tech">计算机技术（软件文档，术语保留）</option>
+            </select>
+          </label>
+          <label>AI 并发数（1-4，所有方案共用）
+            <input type="number" id="inAiConcurrency" min="1" max="4" />
+          </label>
+        </div>
+      </section>
+
+      <section id="sec-proxy" class="card">
+        <h2>代理</h2>
+        <p class="hint">
+          用于访问在国内无法直连的翻译接口（如谷歌翻译）。
+          「仅翻译相关 API」通过 PAC 脚本只让翻译请求走代理，不影响其他网站；
+          「全局代理」会修改整个浏览器的代理设置。
+        </p>
+        <div class="grid">
+          <label>代理模式
+            <select id="selProxyMode">
+              <option value="system">不使用代理（浏览器默认）</option>
+              <option value="direct">强制直连</option>
+              <option value="custom">自定义代理</option>
+            </select>
+          </label>
+          <label>生效范围（自定义代理时）
+            <select id="selProxyScope">
+              <option value="apiOnly">仅翻译相关 API（推荐）</option>
+              <option value="all">全局（整个浏览器）</option>
+            </select>
+          </label>
+          <label>协议
+            <select id="selProxyProtocol">
+              <option value="http">HTTP</option>
+              <option value="https">HTTPS</option>
+              <option value="socks5">SOCKS5</option>
+            </select>
+          </label>
+          <label>服务器地址
+            <input type="text" id="inProxyHost" placeholder="127.0.0.1" autocomplete="off" />
+          </label>
+          <label>端口
+            <input type="text" id="inProxyPort" placeholder="7890" autocomplete="off" />
+          </label>
+        </div>
+        <div class="actions">
+          <span class="test-result" id="proxyStatus"></span>
+          <button class="secondary" id="btnReapplyProxy">重新应用</button>
+        </div>
+      </section>
+
+      <section id="sec-usage" class="card">
+        <h2>用量统计</h2>
+        <p class="hint">
+          按实际使用的翻译服务分类统计（缓存命中不重复计费）。AI token 优先采用接口返回的真实用量，缺失时按字符估算。数据仅保存在本机。
+        </p>
+        <div class="usage-cols">
+          <div class="usage-block">
+            <h3>今日</h3>
+            <div id="usageToday"></div>
+          </div>
+          <div class="usage-block">
+            <h3>累计</h3>
+            <div id="usageTotal"></div>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="secondary" id="btnResetUsage">清空统计</button>
+          <span class="test-result" id="usageResult"></span>
+        </div>
+      </section>
+
+      <section id="sec-advanced" class="card">
+        <h2>高级</h2>
+        <div class="grid">
+          <label class="wide">不翻译的站点（每行一个域名，自动匹配子域名）
+            <textarea id="inBlacklist" rows="4" placeholder="例如：&#10;mail.example.com&#10;github.com"></textarea>
+          </label>
+        </div>
+        <div class="actions wrap">
+          <button class="secondary" id="btnExport">导出设置</button>
+          <button class="secondary" id="btnImport">导入设置</button>
+          <button class="secondary" id="btnClearCache">清除翻译缓存</button>
+          <button class="secondary danger" id="btnReset">恢复默认设置</button>
+          <input type="file" id="importFile" accept="application/json" hidden />
+          <span class="test-result" id="advancedResult"></span>
+        </div>
+      </section>
+    </main>
+
+    <div class="save-bar">
+      <span id="saveTip" class="tip"></span>
+      <button id="btnSave" class="primary">保存设置</button>
+    </div>
+  </div>
+
+  <script src="options.js" type="module"></script>
+</body>
+</html>

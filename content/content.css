@@ -1,0 +1,9 @@
+/* 本插件插入的双语译文节点。颜色由 JS 按用户设置以内联样式写入，这里只做兜底。 */
+.itr-bi {
+  color: #3b82f6;
+}
+
+.itr-bi-block {
+  display: block;
+  margin-top: 2px;
+}

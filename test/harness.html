@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Translation Core Test Harness</title>
+  <link rel="stylesheet" href="../content/content.css" />
+  <style>
+    body { font: 14px/1.6 system-ui, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; }
+    pre { background: #f4f4f5; padding: 10px; border-radius: 6px; }
+    #log { white-space: pre-wrap; background: #111827; color: #e5e7eb; padding: 12px; border-radius: 8px; min-height: 60px; }
+    .fail { color: #ef4444; }
+  </style>
+</head>
+<body>
+  <h1>The quick brown fox</h1>
+  <p>
+    Hello world. This is a paragraph with some <b>bold text</b> and
+    <a href="#">a link</a>. Repeated text appears twice: <span>Shared label</span>
+    and <em>Shared label</em>.
+  </p>
+  <ul>
+    <li>First item</li>
+    <li>Second item</li>
+    <li>Third item</li>
+  </ul>
+  <table border="1" cellpadding="6">
+    <tr><th>Name</th><th>Value</th></tr>
+    <tr><td>Alpha</td><td>100</td></tr>
+  </table>
+  <div class="notranslate">NOT_TRANSLATED_MARKER</div>
+  <pre>code block should stay untouched</pre>
+  <textarea>textarea content untouched</textarea>
+  <p class="dup">Identical paragraph text</p>
+  <p class="dup">Identical paragraph text</p>
+  <div>
+    <input id="nameInput" placeholder="Please enter your name" title="Name field title" />
+  </div>
+  <itr-shadow-card></itr-shadow-card>
+  <div id="delayedMenu" style="display: none;">A hidden menu item revealed later</div>
+  <div id="log">running…</div>
+
+  <script src="mock.js"></script>
+  <script src="../content/core.js"></script>
+  <script src="../content/content.js"></script>
+  <script src="harness.js"></script>
+</body>
+</html>
