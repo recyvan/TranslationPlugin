@@ -45,16 +45,55 @@
     // 纯链接 / 邮箱地址没有可翻译的自然语言内容，跳过以节省请求
     if (/^(https?:\/\/|www\.)\S+$/i.test(trimmed)) return false;
     if (/^\S+@\S+\.\S+$/.test(trimmed)) return false;
+    // 代码 / 脚本特征：站点常把 JS 源码内联在非 script 标签里（IEEE 的
+    // <APM_DO_NOT_TOUCH> 就塞了 4000+ 字符监控脚本）。这些内容不可翻译，
+    // 送进模型只会烧 token 并污染写回结果。
+    if (looksLikeCode(trimmed)) return false;
     if (!CJK_RE.test(trimmed) && trimmed.length < 2) return false;
     return true;
+  }
+
+  // 启发式判断“这段文本是代码而不是自然语言”。
+  // 阈值取保守值：宁可漏判（照常翻译），也不要把正常正文误杀。
+  function looksLikeCode(s) {
+    // 明显的函数/脚本骨架
+    if (/^\s*(?:\(function\s*\(|function\s*[\w$]*\s*\(|var\s+[\w$]+\s*=|const\s+[\w$]+\s*=|let\s+[\w$]+\s*=)/.test(s)) {
+      return true;
+    }
+    // 连续出现 JSON/JS 特征符号
+    const codeChars = (s.match(/[{}();=<>[\]]/g) || []).length;
+    if (s.length > 60 && codeChars / s.length > 0.04) return true;
+    // 典型脚本片段
+    if (/window\.[\w$]+\s*=|document\.[\w$]+\(|\.prototype\.|=>\s*\{/.test(s)) return true;
+    return false;
   }
 
   function isVisible(el) {
     try {
       if (el.checkVisibility) {
-        return el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+        // checkVisibility 只看 CSS 层的 display/visibility/opacity，不看「有没有渲染尺寸」。
+        // 站点的内联 <script>/<APM_DO_NOT_TOUCH> 之类元素 display:inline、visibility:visible，
+        // 但渲染尺寸是 0×0（IEEE Xplore 上就有 4025 字符的 JS 源码挂在这种标签里）。
+        // 不加尺寸判定会把整段源码当正文翻译，既烧 token 又破坏写回布局。
+        if (!el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false;
       }
-    } catch (e) { /* 老内核直接视为可见 */ }
+    } catch (e) {
+      return true; // 老内核直接视为可见
+    }
+
+    // 尺寸兜底：元素必须真的占有面积。
+    // 注意不能用 getClientRects().length —— 宽高都是 0 的元素（IEEE 的
+    // <APM_DO_NOT_TOUCH> 内联脚本）依然会返回 1 个空 rect。
+    try {
+      const rects = el.getClientRects();
+      let area = false;
+      for (let i = 0; i < rects.length; i++) {
+        if (rects[i].width > 0 && rects[i].height > 0) { area = true; break; }
+      }
+      if (!area) return false;
+    } catch (e) {
+      return true;
+    }
     return true;
   }
 
@@ -66,6 +105,8 @@
     // 计算样式按元素缓存：同一元素的 display / overflow / height 会在
     // 块级判定与写回降级判断中多次读取，避免重复调用 getComputedStyle
     let styleCache = new WeakMap();
+    // “是否有块级子元素”的判定结果缓存（isLayoutConstrained 向上查祖先时会重复问）
+    let blockChildCache = new WeakMap();
 
     function css(el) {
       let cs = styleCache.get(el);
@@ -74,6 +115,61 @@
         styleCache.set(el, cs);
       }
       return cs;
+    }
+
+    // 写回位置是否会“挤压”译文：向上看若干层祖先，遇到下列任一情况就只允许行内译文，
+    // 不允许插入 display:block 的整行译文。
+    //   · 祖先自身是 flex / grid 容器 —— 新增块级子项会被 flex 拉伸，改变整行高度
+    //   · 祖先高度被写死（非 auto）且 overflow 裁剪 —— 译文会被切掉
+    //   · 祖先自身是 inline（如 IEEE 的 xpl-results-item），块级子项会打断行盒、撑高父级
+    const MAX_LAYOUT_LOOKUP = 4;
+
+    function isLayoutConstrained(el) {
+      let cur = el;
+      for (let depth = 0; cur && depth <= MAX_LAYOUT_LOOKUP; depth++) {
+        let cs;
+        try {
+          cs = css(cur);
+        } catch (e) {
+          break; // 跨文档 / 已脱离文档：不再向上判断
+        }
+        if (!cs) break;
+
+        const display = cs.display || '';
+        // 当前元素或祖先是 flex / grid：块级译文会被当作 flex item 处理
+        if (/flex|grid/.test(display)) return true;
+
+        // 祖先高度写死且裁剪溢出：块级译文会被切掉（行内同样受影响，但不额外增行）
+        if (
+          (cs.overflowY === 'hidden' || cs.overflow === 'hidden') &&
+          cs.height !== 'auto' &&
+          depth > 0
+        ) {
+          return true;
+        }
+
+        // 自身是 inline 且内部含块级子元素时，块级译文会打断行盒并撑高父级
+        if (depth > 0 && /^inline/.test(display) && hasBlockChild(cur)) return true;
+
+        cur = cur.parentElement;
+        if (cur === document.body || cur === document.documentElement) break;
+      }
+      return false;
+    }
+
+    // 元素是否至少有一个块级子元素（判定结果随元素缓存，同一单元内复用）
+    function hasBlockChild(el) {
+      let hit = blockChildCache.get(el);
+      if (hit !== undefined) return hit;
+      hit = false;
+      for (const child of el.children) {
+        if (BLOCK_DISPLAY_RE.test(css(child).display)) {
+          hit = true;
+          break;
+        }
+      }
+      blockChildCache.set(el, hit);
+      return hit;
     }
 
     const state = {
@@ -86,9 +182,25 @@
       entries: [],             // 已应用的翻译记录，用于恢复原文
       observer: null,
       failedUnits: [],         // 翻译失败的单元（供重试）
+      // 失败单元对应的原文文本。content.js 的进度徽章按文本去重展示失败项，
+      // 此前这里从未定义，徽章读取到 undefined。与 failedUnits 同步维护。
+      failedTexts: [],
+      pendingWriteChecks: [],
       unitSeq: 0,
       lastError: ''
     };
+
+    // failedUnits 与 failedTexts 必须始终一致：前者供重试，后者供徽章展示。
+    // 统一经由这两个函数修改，避免出现“重试时看得到、徽章里看不到”的偏差。
+    function addFailedUnit(unit) {
+      if (!state.failedUnits.includes(unit)) state.failedUnits.push(unit);
+      if (!state.failedTexts.includes(unit.text)) state.failedTexts.push(unit.text);
+    }
+
+    function clearFailed() {
+      state.failedUnits = [];
+      state.failedTexts.length = 0;
+    }
 
     // -------------------------------------------------- 基础收集工具
 
@@ -160,14 +272,86 @@
     }
 
     // nodes 允许两种形态：{node, text} 收集项，或裸文本节点（内部统一解开）
+    // 单单元字符上限：超过就拆成多个单元分别送翻。
+    // 这是「兜底」而非主要分组依据——真正的分组看下面的 makeUnits。
+    const MAX_UNIT_CHARS = 600;
+
     function makeUnit(el, nodes, isContainer) {
       const items = nodes.map((n) => (n && n.node ? n.node : n));
+      const text = items.map((n) => normalizeText(n.nodeValue)).join(' ');
       return {
         el,
         nodes: items,
-        text: items.map((n) => normalizeText(n.nodeValue)).join(' '),
+        text,
         isContainer: !!isContainer
       };
+    }
+
+    // 找文本节点最近的「段落级」祖先：页面排版的基本单位。
+    // 译文必须按这个粒度生成，否则一条搜索结果（标题+作者+期刊+年份+摘要）
+    // 会被拼成一段 300+ 字的译文，整体塞进某个 span，把布局彻底撑坏。
+    function paragraphAncestorOf(node, ceiling) {
+      let el = node.parentElement;
+      while (el && el !== ceiling && el !== document.body) {
+        let display = '';
+        try { display = css(el).display || ''; } catch (e) { break; }
+        // 段落级容器：块级、且不是纯行内包裹层
+        if (BLOCK_DISPLAY_RE.test(display)) return el;
+        // 行内容器（span/a/em）继续向上找，但不要越过 flex/grid 子项边界
+        if (/flex|grid/.test(display)) return el;
+        el = el.parentElement;
+      }
+      return ceiling || (node.parentElement) || document.body;
+    }
+
+    // 把收集到的文本节点切成翻译单元。
+    //
+    // 分组规则（重构后）：
+    //   1. 按「最近的段落级祖先」分组 —— 同一段落内的多个文本节点合成一个单元，
+    //      这是保证译文语义完整、且写回位置正确的前提；
+    //   2. 组内再按 MAX_UNIT_CHARS 切分，避免单请求过大；
+    //   3. 不同段落绝不合并在一个单元里。
+    //
+    // 旧实现只按字符数把整个 el 下的节点拼成几大块，导致一条搜索结果的
+    // 标题、作者、摘要全挤进同一个 span，表现为“格式对不齐 / 无填充错位”。
+    function makeUnits(el, nodes, isContainer) {
+      const items = nodes.map((n) => (n && n.node ? n.node : n));
+
+      // 按段落祖先分桶，保持原有文档顺序
+      const buckets = new Map();
+      const order = [];
+      for (const n of items) {
+        const para = paragraphAncestorOf(n, el);
+        let bucket = buckets.get(para);
+        if (!bucket) {
+          bucket = [];
+          buckets.set(para, bucket);
+          order.push(para);
+        }
+        bucket.push(n);
+      }
+
+      const units = [];
+      for (const para of order) {
+        const bucket = buckets.get(para);
+        let cur = [];
+        let curLen = 0;
+        const flush = () => {
+          if (!cur.length) return;
+          // 单元的 el 用段落祖先（写回时的锚点），而不是最外层容器
+          units.push(makeUnit(para, cur, isContainer));
+          cur = [];
+          curLen = 0;
+        };
+        for (const n of bucket) {
+          const len = normalizeText(n.nodeValue).length;
+          if (cur.length && curLen + len > MAX_UNIT_CHARS) flush();
+          cur.push(n);
+          curLen += len;
+        }
+        flush();
+      }
+      return units;
     }
 
     function markUnit(unit) {
@@ -268,13 +452,17 @@
         return BLOCK_DISPLAY_RE.test(css(el).display);
       };
 
-      const visit = (el) => {
+      // 递归深度上限：防御病态深嵌套页面（正常页面 <20 层）
+      const MAX_DEPTH = 200;
+
+      const visit = (el, depth) => {
         if (units.length >= limit) return;
+        if (depth > MAX_DEPTH) return;
 
         // 带 Shadow Root 的宿主只渲染 Shadow 内容，light DOM 不处理
         if (el.shadowRoot) {
           if (el.closest && el.closest(SKIP_SELECTOR)) return;
-          visit(el.shadowRoot);
+          visit(el.shadowRoot, depth + 1);
           return;
         }
 
@@ -285,36 +473,50 @@
         }
 
         if (blockChildren.length) {
-          // 容器块：递归处理块级子元素，直接文本单独成单元
-          for (const child of blockChildren) visit(child);
-          // 行内子元素（自定义元素 / 带 Shadow 的宿主 / 直接承载文本的行内元素）
-          // 不属于任何叶子块，各自作为独立单元收集
+          // 容器块：块级子元素各自递归
+          for (const child of blockChildren) {
+            if (units.length >= limit) break;
+            visit(child, depth + 1);
+          }
+          // 非块的子元素分两类处理：
+          //   a) 自身内部还有块级后代（例如 inline 包裹层里套着 div）→ 继续递归下钻，
+          //      否则那些块级内容永远不会被访问（IEEE 的 body 只有 3 个块级子元素，
+          //      而实际正文都在更深层的 inline 包裹里，这就是“只收到 3 个单元”的根因）
+          //   b) 纯行内内容 → 就地收集为单元
           for (const child of el.children) {
             if (units.length >= limit) break;
             if (blockChildren.includes(child)) continue;
             if (child.closest && child.closest(SKIP_SELECTOR)) continue;
             if (child.shadowRoot) {
-              visit(child);
+              visit(child, depth + 1);
               continue;
             }
             if (!isVisible(child)) continue;
+
+            if (hasBlockChild(child)) {
+              visit(child, depth + 1);
+              continue;
+            }
+
             const found = collectInSubtree(
               child,
               limit - units.length,
               (n) => !state.processed.has(n)
             );
             if (found.length) {
-              const unit = makeUnit(child, found, false);
-              markUnit(unit);
-              units.push(unit);
+              for (const unit of makeUnits(child, found, false)) {
+                markUnit(unit);
+                units.push(unit);
+              }
             }
           }
           if (units.length < limit && isVisible(el)) {
             const nodes = directTextNodes(el);
             if (nodes.length) {
-              const unit = makeUnit(el, nodes, true);
-              markUnit(unit);
-              units.push(unit);
+              for (const unit of makeUnits(el, nodes, true)) {
+                markUnit(unit);
+                units.push(unit);
+              }
             }
           }
         } else {
@@ -328,14 +530,15 @@
             shadowHosts
           );
           if (found.length) {
-            const unit = makeUnit(el, found, false);
-            markUnit(unit);
-            units.push(unit);
+            for (const unit of makeUnits(el, found, false)) {
+              markUnit(unit);
+              units.push(unit);
+            }
           }
         }
       };
 
-      if (document.body) visit(document.body);
+      if (document.body) visit(document.body, 0);
       return units;
     }
 
@@ -383,7 +586,7 @@
       }
       const units = [];
       for (const [el, nodes] of groups) {
-        units.push(makeUnit(el, nodes, false));
+        units.push(...makeUnits(el, nodes, false));
       }
       return units;
     }
@@ -428,14 +631,54 @@
     }
 
     // -------------------------------------------------- 写回 DOM
+    //
+    // 写回模型（重构版）：
+    //   一个翻译单元的译文只能是三种形态之一，由「锚点元素」的排版上下文决定，
+    //   不再按 isContainer / allDirect 这类间接推断决定：
+    //     1. inline  —— 译文作为行内 span 紧跟在最后一个原文节点之后，与原文同属一个行盒
+    //     2. block   —— 译文作为独立一行，插在锚点元素内部末尾（仅当锚点是安全的块级容器）
+    //   判定顺序：先看锚点及祖先是否“安全”（非 flex/grid、非定高裁剪、非 inline 包裹），
+    //   不安全一律降级 inline。这样译文永远不会把原文挤出原有布局。
+
+    // 译文形态
+    const MODE_INLINE = 'inline';
+    const MODE_BLOCK = 'block';
+
+    // 决定译文形态。decision 会记录在 entry 上，便于恢复与调试。
+    function decideWriteMode(unit) {
+      // 有原文节点时，锚点是最后一个原文节点的父元素（译文要贴着它出现）
+      const lastNode = unit.nodes[unit.nodes.length - 1];
+      const anchor = (lastNode && lastNode.parentElement) || unit.el;
+      if (!anchor) return { mode: MODE_INLINE, anchor: unit.el };
+
+      // 行内锚点（span/a/em 等）内部只能再放行内内容
+      let display = '';
+      try {
+        display = css(anchor).display || '';
+      } catch (e) { /* 忽略 */ }
+      if (/^inline/.test(display) && display !== 'inline-block') {
+        return { mode: MODE_INLINE, anchor };
+      }
+
+      // 锚点或祖先处于 flex/grid/定高裁剪：块级译文会破坏布局，降级行内
+      if (isLayoutConstrained(anchor)) {
+        return { mode: MODE_INLINE, anchor };
+      }
+
+      return { mode: MODE_BLOCK, anchor };
+    }
 
     function applyUnit(unit, translation, settings) {
       if (!unit.nodes.every((n) => n.isConnected)) return false;
-      if (!translation || translation === unit.text) return true;
+      // 空译文、或译文与原文完全相同：不写回，也不计入“已应用”。
+      // 之前这里返回 true，导致徽章把“什么都没做”也算成成功块数（IEEE 页面上
+      // 报告“已翻译 148 块”，实际只落地 2 个节点），用户看到的是虚假的成功。
+      if (!translation || translation === unit.text) return false;
 
       const entry = {
         nodes: unit.nodes.map((n) => ({ node: n, original: n.nodeValue })),
-        span: null
+        span: null,
+        mode: null
       };
 
       if (settings.displayMode === 'replace') {
@@ -445,40 +688,72 @@
           state.nodeWatch.set(n, { original: entry.nodes[i].original, expected });
           n.nodeValue = expected;
         });
-      } else {
-        const span = document.createElement('span');
-        span.setAttribute('dir', 'auto'); // 目标语言为 RTL（如阿拉伯语）时自动调整方向
-        span.textContent = translation;
-        span.style.color = settings.translationColor || '#3b82f6';
-        // 容器块 / 文本节点都在块内：紧跟最后一个文本节点；叶子块：作为块的最后一行
-        const allDirect = unit.nodes.every((n) => n.parentElement === unit.el);
-        let constrained = false;
-        try {
-          const cs = css(unit.el);
-          // flex 行内容器与“定高 + 溢出裁剪”的元素里，整行译文会挤爆布局，降级为行内
-          constrained =
-            /flex/.test(cs.display) ||
-            ((cs.overflowY === 'hidden' || cs.overflow === 'hidden') && cs.height !== 'auto');
-        } catch (e) { /* 忽略样式读取失败 */ }
-
-        if (constrained) {
-          span.className = 'itr-bi';
-          unit.nodes[unit.nodes.length - 1].after(span);
-        } else if (unit.isContainer || allDirect) {
-          span.className = 'itr-bi itr-bi-block';
-          unit.nodes[unit.nodes.length - 1].after(span);
-        } else {
-          span.className = 'itr-bi itr-bi-block';
-          unit.el.appendChild(span);
-        }
-        entry.span = span;
-        // 登记原文节点：框架（Vue 等）通过 nodeValue 改写文本时可以发现并重新翻译
-        unit.nodes.forEach((n, i) => {
-          state.nodeWatch.set(n, { original: entry.nodes[i].original, expected: entry.nodes[i].original });
-        });
+        entry.mode = 'replace';
+        state.entries.push(entry);
+        return true;
       }
+
+      const decision = decideWriteMode(unit);
+      const span = document.createElement('span');
+      span.setAttribute('dir', 'auto'); // 目标语言为 RTL（如阿拉伯语）时自动调整方向
+      span.textContent = translation;
+      span.style.color = settings.translationColor || '#3b82f6';
+
+      if (decision.mode === MODE_BLOCK) {
+        span.className = 'itr-bi itr-bi-block';
+        // 插在锚点末尾：block 形态必须独占一行，放在文本节点之后会把尾随的
+        // 内联兄弟挤走，所以统一追加到锚点末尾。
+        decision.anchor.appendChild(span);
+      } else {
+        span.className = 'itr-bi';
+        // inline 形态紧跟最后一个原文节点，保证与原文同一行盒
+        const lastNode = unit.nodes[unit.nodes.length - 1];
+        if (lastNode && lastNode.parentNode === decision.anchor) {
+          lastNode.after(span);
+        } else {
+          decision.anchor.appendChild(span);
+        }
+      }
+
+      entry.span = span;
+      entry.mode = decision.mode;
+      // 登记原文节点：框架（Vue 等）通过 nodeValue 改写文本时可以发现并重新翻译
+      unit.nodes.forEach((n, i) => {
+        state.nodeWatch.set(n, { original: entry.nodes[i].original, expected: entry.nodes[i].original });
+      });
       state.entries.push(entry);
+      // 延后到当前批次的 DOM 写入全部完成后再读取布局，避免每插入一条译文
+      // 就同步触发一次样式与布局计算（长页面会因此产生明显的 layout thrashing）。
+      state.pendingWriteChecks.push(span);
+
       return true;
+    }
+
+    // 批量校验译文节点是否实际显示。先完成所有 DOM 写入，再统一读取布局，
+    // 保留诊断计数的同时，将多次写/读交错改为成批写入后成批读取。
+    function verifyPendingWrites() {
+      const spans = state.pendingWriteChecks.splice(0);
+      for (const span of spans) {
+        try {
+          const attached = span.isConnected && document.documentElement.contains(span);
+          const rect = span.getBoundingClientRect();
+          if (!attached || rect.width === 0 || rect.height === 0) {
+            state.unrenderedWrites = (state.unrenderedWrites || 0) + 1;
+          } else {
+            state.renderedWrites = (state.renderedWrites || 0) + 1;
+          }
+        } catch (e) { /* 忽略自检失败 */ }
+      }
+    }
+
+    function requestConcurrency(settings, fallback) {
+      const isAi = settings.provider === 'ai';
+      const configured = isAi && settings.ai
+        ? settings.ai.concurrency
+        : settings.concurrency;
+      const maximum = isAi ? 4 : 6;
+      const value = Number(configured) || fallback;
+      return Math.max(1, Math.min(value, maximum));
     }
 
     // -------------------------------------------------- 批量翻译 + 应用（观察器 / 重扫共用）
@@ -489,7 +764,7 @@
       const results = new Map();
       const failedTexts = new Set();
       const batches = buildBatches(uniqueTexts, batchCapsFor(settings.provider));
-      await runPool(batches, 2, async (batch) => {
+      await runPool(batches, Math.min(2, requestConcurrency(settings, 2)), async (batch) => {
         try {
           const out = await hooks.translateFn(batch);
           batch.forEach((t, i) => results.set(t, out[i] != null ? out[i] : ''));
@@ -505,7 +780,7 @@
         if (gen !== state.gen) break;
         const t = results.get(unit.text);
         if (t === undefined) {
-          if (failedTexts.has(unit.text)) state.failedUnits.push(unit);
+          if (failedTexts.has(unit.text)) addFailedUnit(unit);
           continue;
         }
         const ok = unit.attrUnit
@@ -513,7 +788,108 @@
           : applyUnit(unit, t, settings);
         if (ok) applied++;
       }
+      verifyPendingWrites();
       return { applied, failed: state.failedUnits.length };
+    }
+
+    // 收集阶段诊断：不做任何写回，只回报“为什么没收到单元”。
+    // 供排障与开发期自检使用；正常翻译流程不调用。
+    function diagnoseCollection() {
+      const report = {
+        bodyPresent: !!document.body,
+        textNodesTotal: 0,
+        textNodesInSkip: 0,
+        textNodesInvisible: 0,
+        textNodesTooShort: 0,
+        textNodesCollected: 0,
+        shadowHosts: 0,
+        units: 0,
+        samples: []
+      };
+      if (!document.body) return report;
+
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+      let node;
+      while ((node = walker.nextNode())) {
+        const raw = node.nodeValue || '';
+        if (!raw.trim()) continue;
+        report.textNodesTotal++;
+        const parent = node.parentElement;
+        if (!parent) { report.textNodesInSkip++; continue; }
+        if (parent.closest(SKIP_SELECTOR)) { report.textNodesInSkip++; continue; }
+        if (!isVisible(parent)) { report.textNodesInvisible++; continue; }
+        const text = normalizeText(raw);
+        if (!isTranslatableText(text)) { report.textNodesTooShort++; continue; }
+        report.textNodesCollected++;
+        if (report.samples.length < 5) report.samples.push(text.slice(0, 40));
+      }
+
+      try {
+        report.shadowHosts = findShadowHosts(document.body).length;
+      } catch (e) { /* 忽略 */ }
+
+      // 逐层判定诊断：定位 visit() 在哪一步停住
+      try {
+        const body = document.body;
+        report.bodyVisible = isVisible(body);
+        report.bodyDisplay = css(body) && css(body).display;
+        report.bodyChildren = body.children.length;
+        const kids = [...body.children];
+        report.blockChildCount = kids.filter((c) => BLOCK_DISPLAY_RE.test(css(c).display)).length;
+        report.kidSamples = kids.slice(0, 6).map((c) => ({
+          tag: c.tagName,
+          display: css(c) && css(c).display,
+          isBlock: BLOCK_DISPLAY_RE.test(css(c).display),
+          visible: isVisible(c),
+          inSkip: !!(c.closest && c.closest(SKIP_SELECTOR)),
+          textLen: (c.textContent || '').length
+        }));
+      } catch (e) {
+        report.layerError = (e && e.message) || String(e);
+      }
+
+      try {
+        report.units = collectUnits(MAX_UNITS).length;
+      } catch (e) {
+        report.unitsError = (e && e.message) || String(e);
+      }
+
+      // 写回诊断：上次翻译留下的译文节点现在还在不在 DOM 里。
+      // “徽章报告 N 块、页面却看不到译文”通常发生在这里：
+      // 节点被站点框架整体重渲染顶掉，或插入到了不可见/脱离文档的位置。
+      try {
+        const spans = state.entries.filter((e) => e.span);
+        report.entries = state.entries.length;
+        report.spanEntries = spans.length;
+        report.spansConnected = spans.filter((e) => e.span.isConnected).length;
+        report.spansInDom = spans.filter((e) => e.span.isConnected && document.documentElement.contains(e.span)).length;
+        report.spansVisible = spans.filter((e) => {
+          if (!e.span.isConnected) return false;
+          try {
+            const r = e.span.getBoundingClientRect();
+            return r.width > 0 && r.height > 0;
+          } catch (err) { return false; }
+        }).length;
+        report.spanModes = spans.reduce((acc, e) => {
+          acc[e.mode] = (acc[e.mode] || 0) + 1;
+          return acc;
+        }, {});
+        report.spanSamples = spans.slice(0, 5).map((e) => ({
+          mode: e.mode,
+          connected: e.span.isConnected,
+          inDoc: document.documentElement.contains(e.span),
+          rect: (() => { const r = e.span.getBoundingClientRect(); return Math.round(r.width) + 'x' + Math.round(r.height); })(),
+          len: (e.span.textContent || '').length,
+          cls: e.span.className
+        }));
+        // 全文档兜底统计（不依赖 entries）
+        report.domSpanCount = document.querySelectorAll('.itr-bi').length;
+        report.renderedWrites = state.renderedWrites || 0;
+        report.unrenderedWrites = state.unrenderedWrites || 0;
+      } catch (e) {
+        report.writeError = (e && e.message) || String(e);
+      }
+      return report;
     }
 
     // -------------------------------------------------- 主流程：整页翻译
@@ -525,7 +901,9 @@
       state.translating = true;
       state.gen++;
       const gen = state.gen;
-      state.failedUnits = [];
+      clearFailed();
+      state.renderedWrites = 0;
+      state.unrenderedWrites = 0;
       state.lastError = '';
 
       try {
@@ -545,7 +923,7 @@
         const results = new Map();
         const failedTexts = new Set();
         const batches = buildBatches(uniqueTexts, batchCapsFor(settings.provider));
-        const limit = Math.max(1, Math.min(settings.concurrency || 3, 6));
+        const limit = requestConcurrency(settings, 3);
         let doneBatches = 0;
 
         await runPool(batches, limit, async (batch) => {
@@ -576,22 +954,41 @@
         if (gen !== state.gen) return { ok: true, cancelled: true };
 
         // 写回 DOM（相同段落复用同一译文）
+        // 单个单元写回失败（节点被站点框架移除、样式读取异常等）只记为失败，
+        // 不能中断整页——否则前面已写好的译文会停在半成品状态。
         let appliedCount = 0;
         for (const unit of units) {
           if (gen !== state.gen) break;
           const t = results.get(unit.text);
           if (t === undefined) {
-            if (failedTexts.has(unit.text)) state.failedUnits.push(unit);
+            if (failedTexts.has(unit.text)) addFailedUnit(unit);
             continue;
           }
-          const ok = unit.attrUnit
-            ? applyAttrUnit(unit, t, settings)
-            : applyUnit(unit, t, settings);
+          let ok = false;
+          try {
+            ok = unit.attrUnit
+              ? applyAttrUnit(unit, t, settings)
+              : applyUnit(unit, t, settings);
+          } catch (e) {
+            // 真正的写回异常：记为失败，等待用户重试
+            ok = false;
+            state.lastError = (e && e.message) || String(e);
+            addFailedUnit(unit);
+          }
+          // 注意：applyUnit 在“译文为空 / 译文与原文相同”时返回 false，
+          // 那是“无需翻译”（例如页面已是目标语言），不能计入失败。
           if (ok) appliedCount++;
         }
+        verifyPendingWrites();
 
         if (!aborted && state.enabled) {
-          startObserver(settings, hooks);
+          // 动态监听挂载失败不应影响本次翻译结果：观察器只是增量能力，
+          // 抛出去会把已经写好的译文状态留在中间态（徽章卡在“翻译中”）。
+          try {
+            startObserver(settings, hooks);
+          } catch (e) {
+            state.lastError = (e && e.message) || String(e);
+          }
         }
 
         return {
@@ -775,7 +1172,7 @@
         failed.push(unit);
       }
       if (!failed.length) {
-        state.failedUnits = [];
+        clearFailed();
         return { ok: true, total: 0 };
       }
 
@@ -785,7 +1182,7 @@
         hooks.onProgress(0, failed.length);
         const results = new Map();
         const batches = buildBatches([...new Set(failed.map((u) => u.text))]);
-        await runPool(batches, 2, async (batch) => {
+        await runPool(batches, Math.min(2, requestConcurrency(settings, 2)), async (batch) => {
           try {
             const out = await hooks.translateFn(batch);
             batch.forEach((t, i) => results.set(t, out[i] != null ? out[i] : ''));
@@ -809,7 +1206,9 @@
             stillFailed.push(unit);
           }
         }
-        state.failedUnits = stillFailed;
+        verifyPendingWrites();
+        clearFailed();
+        for (const unit of stillFailed) addFailedUnit(unit);
         hooks.onProgress(failed.length, failed.length);
         return { ok: true, total: failed.length, failed: stillFailed.length };
       } finally {
@@ -841,14 +1240,16 @@
       state.processed = new WeakSet();
       state.processedAttrs = new WeakMap();
       state.nodeWatch = new WeakMap();
+      state.pendingWriteChecks.length = 0;
       styleCache = new WeakMap();
-      state.failedUnits = [];
+      blockChildCache = new WeakMap();
+      clearFailed();
       state.enabled = false;
       state.translating = false;
       return { ok: true };
     }
 
-    return { state, translate, restore, retryFailed, rescan };
+    return { state, translate, restore, retryFailed, rescan, diagnoseCollection };
   }
 
   global.ITRCore = { create };

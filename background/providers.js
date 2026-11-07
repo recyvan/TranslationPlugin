@@ -213,12 +213,23 @@ function parseNumberedLines(content, count) {
   const fenced = content.match(/```(?:\w+)?\s*([\s\S]*?)```/);
   const text = fenced ? fenced[1] : content;
   const map = new Map();
-  // 容忍 “**1.**” “1、” “1)” 等常见输出格式
-  const re = /^\s*\**\s*(\d{1,3})\s*\**\s*[.、．:：)]\s?(.*)$/gm;
-  let m;
-  while ((m = re.exec(text))) {
-    const idx = parseInt(m[1], 10);
-    if (idx >= 1 && idx <= count && !map.has(idx)) map.set(idx, m[2].replace(/\**\s*$/, '').trim());
+  // 容忍 “**1.**” “1、” “1)” 等常见输出格式；
+  // 非编号行作为上一行的续行，避免模型把长译文折成多行后被误判为缺行。
+  const re = /^\s*\**\s*(\d{1,3})\s*\**\s*[.、．:：)]\s?(.*)$/;
+  let current = 0;
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(re);
+    if (m) {
+      const idx = parseInt(m[1], 10);
+      const value = m[2].replace(/\**\s*$/, '').trim();
+      current = idx >= 1 && idx <= count && !map.has(idx) ? idx : 0;
+      if (current) map.set(current, value);
+      continue;
+    }
+    if (current && line.trim()) {
+      const previous = map.get(current);
+      map.set(current, previous ? `${previous}\n${line.trim()}` : line.trim());
+    }
   }
   return map;
 }
@@ -315,7 +326,10 @@ async function aiTranslate(texts, from, to, cfg) {
   }
 
   const map = parseNumberedLines(content, texts.length);
-  if (map.size < texts.length) return null; // 行数不齐 → 上层逐条重试
+  if (
+    map.size < texts.length ||
+    texts.some((_, i) => !String(map.get(i + 1) || '').trim())
+  ) return null; // 行数不齐或有空译文 → 上层逐条重试
   return texts.map((_, i) => map.get(i + 1) || '');
 }
 

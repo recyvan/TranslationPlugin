@@ -1,8 +1,25 @@
 /* 本插件插入的双语译文节点。颜色由 JS 按用户设置以内联样式写入，这里只做兜底。 */
+
+/* 译文节点必须完整继承原位置的排版属性。
+   站点常把 font-family / font-size / line-height 写在具体元素甚至自托管字体上，
+   新插入的节点一旦脱离原继承链就会回落浏览器默认字体（IEEE Xplore 的
+   "HelveticaNeue Regular" 就是这种情况），表现为“字变样”或“字看不见”。 */
 .itr-bi {
   color: #3b82f6;
+  font: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  white-space: inherit;
+  word-break: inherit;
+  overflow-wrap: inherit;
+  direction: inherit;
+  text-align: inherit;
+  vertical-align: baseline;
 }
 
+/* 整行译文：作为独立一行显示在原文下方。
+   注意：仅在父级布局允许时才使用（flex / grid / 定高容器内会降级为 .itr-bi 行内）。 */
 .itr-bi-block {
   display: block;
   margin-top: 2px;

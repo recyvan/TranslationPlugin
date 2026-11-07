@@ -216,7 +216,17 @@
     lastRun = { settings, hooks };
     // 提前置位：core.translate 完成后据此启动动态内容监听
     core.state.enabled = true;
-    const result = await core.translate(settings, hooks);
+    let result;
+    try {
+      result = await core.translate(settings, hooks);
+    } catch (e) {
+      // 核心流程抛错时必须收敛徽章：否则进度条会永远停在“翻译中 n/n”，
+      // 用户既看不到结果也看不到失败原因（IEEE 页面上出现过）。
+      core.state.enabled = false;
+      const msg = (e && e.message) || String(e) || '翻译失败';
+      badge && badge.onError(msg);
+      return { ok: false, error: msg };
+    }
     // 翻译途中被“恢复原文”打断：restore 已复位状态并隐藏徽章，这里静默退出
     if (result && result.cancelled) return result;
     if (result && result.ok) {
@@ -233,6 +243,7 @@
     } else {
       core.state.enabled = false;
       if (result && result.error) badge && badge.onError(result.error);
+      else badge && badge.onError('翻译失败');
     }
     return result;
   }
@@ -252,10 +263,19 @@
     if (!lastRun) return { ok: false, error: '没有可重试的任务' };
     if (core.state.translating) return { ok: false, error: '正在翻译中' };
     badge && badge.start();
-    const result = await core.retryFailed(lastRun.settings, lastRun.hooks);
+    let result;
+    try {
+      result = await core.retryFailed(lastRun.settings, lastRun.hooks);
+    } catch (e) {
+      const msg = (e && e.message) || String(e) || '重试失败';
+      badge && badge.onError(msg);
+      return { ok: false, error: msg };
+    }
     if (result && result.ok) {
       if (result.failed > 0) badge && badge.onError('仍有部分失败');
       else badge && badge.finish(result.total, 0, false);
+    } else {
+      badge && badge.onError((result && result.error) || '重试失败');
     }
     return result;
   }
@@ -299,6 +319,8 @@
       start: () => startPage(msg.force),
       restore: restorePage,
       toggle: togglePage,
+      // 排障：回报收集阶段为什么没拿到单元（不写回、不联网）
+      diagnose: async () => ({ ok: true, report: core.diagnoseCollection() }),
       // 设置变更后重译：先恢复原文再用新设置翻译
       restart: async () => {
         await restorePage();
